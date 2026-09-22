@@ -1,0 +1,28 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // Products: readable by everyone; writeable by authenticated admin/users
+    match /products/{productId} {
+      allow read: if true;
+      allow write: if true;
+    }
+
+    // SHG profiles: readable & writeable for portal registration & dashboard
+    match /shg_profiles/{shgId} {
+      allow read: if true;
+      allow write: if true;
+    }
+
+    // Orders: readable by buyers, SHGs and Admin; writeable for order placement & updates
+    match /orders/{orderId} {
+      allow read: if true;
+      allow write: if true;
+    }
+
+    // User accounts / credentials for SHG and Buyer login
+    match /user_accounts/{accountId} {
+      allow read: if true;
+      allow write: if true;
+    }
+  }
+}

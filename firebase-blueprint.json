@@ -1,0 +1,87 @@
+{
+  "entities": {
+    "products": {
+      "title": "Products",
+      "description": "Products made by SHGs or managed by Admin",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "title": { "type": "string" },
+        "brand": { "type": "string" },
+        "category": { "type": "string" },
+        "shortDescription": { "type": "string" },
+        "longDescription": { "type": "string" },
+        "price": { "type": "number" },
+        "imageUrl": { "type": "string" },
+        "materials": { "type": "string" },
+        "highlights": { "type": "object" },
+        "reviewsCount": { "type": "number" },
+        "rating": { "type": "number" },
+        "boughtCount": { "type": "number" },
+        "inStock": { "type": "boolean" },
+        "createdAt": { "type": "string" }
+      },
+      "required": ["title", "price", "imageUrl", "shortDescription", "longDescription"]
+    },
+    "shg_profiles": {
+      "title": "SHG Profiles",
+      "description": "Self-Help Group registration details and skill profiles",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "groupName": { "type": "string" },
+        "regNumber": { "type": "string" },
+        "district": { "type": "string" },
+        "state": { "type": "string" },
+        "contactPhone": { "type": "string" },
+        "overallSkill": { "type": "string" },
+        "leaderEmail": { "type": "string" },
+        "leaderUid": { "type": "string" },
+        "members": { "type": "array" },
+        "videoProgress": { "type": "object" },
+        "completedLectures": { "type": "array" },
+        "createdAt": { "type": "string" }
+      },
+      "required": ["groupName", "overallSkill", "members"]
+    },
+    "orders": {
+      "title": "Orders",
+      "description": "Buyer purchase orders and SHG assigned production batches",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "productId": { "type": "string" },
+        "productTitle": { "type": "string" },
+        "productImage": { "type": "string" },
+        "productPrice": { "type": "number" },
+        "quantity": { "type": "number" },
+        "totalAmount": { "type": "number" },
+        "buyerEmail": { "type": "string" },
+        "buyerName": { "type": "string" },
+        "buyerAddress": { "type": "string" },
+        "buyerPhone": { "type": "string" },
+        "paymentStatus": { "type": "string" },
+        "assignedShgId": { "type": "string" },
+        "assignedShgName": { "type": "string" },
+        "productionStatus": { "type": "string" },
+        "allocations": { "type": "array" },
+        "orderDate": { "type": "string" }
+      },
+      "required": ["productId", "quantity", "totalAmount", "buyerEmail", "paymentStatus"]
+    },
+    "user_accounts": {
+      "title": "User Accounts",
+      "description": "Credentials and role metadata for SHG groups and Buyers",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "email": { "type": "string" },
+        "password": { "type": "string" },
+        "role": { "type": "string" },
+        "name": { "type": "string" },
+        "createdAt": { "type": "string" }
+      },
+      "required": ["email", "password", "role"]
+    }
+  }
+}

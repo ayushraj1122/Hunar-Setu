@@ -1,0 +1,6 @@
+{
+  "name": "Hunar-Setu",
+  "description": "Empowering Self-Help Groups (SHGs) through digital commerce, skill training, and order production management.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
