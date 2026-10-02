@@ -23,13 +23,20 @@ import {
   Trash2,
   Video,
   Wand2,
-  Split
+  Split,
+  Maximize2,
+  Minimize2,
+  ChevronLeft,
+  ChevronRight,
+  X,
+  CheckCircle2
 } from 'lucide-react';
 
 interface SHGPortalProps {
   currentSHG: SHGProfile | null;
   activeUserEmail?: string;
   orders: OrderItem[];
+  courses?: LectureCourse[];
   onSaveProfile: (profile: SHGProfile) => Promise<void>;
   onUpdateOrderStatus: (
     orderId: string,
@@ -43,10 +50,12 @@ export const SHGPortal: React.FC<SHGPortalProps> = ({
   currentSHG,
   activeUserEmail,
   orders,
+  courses,
   onSaveProfile,
   onUpdateOrderStatus,
   onBackToHome
 }) => {
+  const coursesList = courses && courses.length > 0 ? courses : SHG_COURSES;
   // First time login registration state if no profile exists yet
   const [isRegistering, setIsRegistering] = useState<boolean>(!currentSHG);
   const [activeTab, setActiveTab] = useState<'learning' | 'orders'>('learning');
@@ -100,12 +109,122 @@ export const SHGPortal: React.FC<SHGPortalProps> = ({
 
   // Course & Video Player modal state
   const [activeLecture, setActiveLecture] = useState<LectureCourse | null>(null);
-  const [videoProgress, setVideoProgress] = useState<Record<string, number>>(
-    currentSHG?.videoProgress || {}
-  );
-  const [completedLectures, setCompletedLectures] = useState<string[]>(
-    currentSHG?.completedLectures || []
-  );
+  const [isPlayerFullscreen, setIsPlayerFullscreen] = useState<boolean>(false);
+  const [isLiveWatchTracking, setIsLiveWatchTracking] = useState<boolean>(true);
+  const [progressNotification, setProgressNotification] = useState<string | null>(null);
+
+  const [videoProgress, setVideoProgress] = useState<Record<string, number>>(() => {
+    if (currentSHG?.videoProgress && Object.keys(currentSHG.videoProgress).length > 0) {
+      return currentSHG.videoProgress;
+    }
+    const cached = localStorage.getItem('hunarsetu_progress_' + (activeUserEmail || 'shg'));
+    if (cached) {
+      try {
+        const parsed = JSON.parse(cached);
+        return parsed.videoProgress || {};
+      } catch {
+        return {};
+      }
+    }
+    return {};
+  });
+
+  const [completedLectures, setCompletedLectures] = useState<string[]>(() => {
+    if (currentSHG?.completedLectures && currentSHG.completedLectures.length > 0) {
+      return currentSHG.completedLectures;
+    }
+    const cached = localStorage.getItem('hunarsetu_progress_' + (activeUserEmail || 'shg'));
+    if (cached) {
+      try {
+        const parsed = JSON.parse(cached);
+        return parsed.completedLectures || [];
+      } catch {
+        return [];
+      }
+    }
+    return [];
+  });
+
+  // Active watching timer: while video is open and auto tracking is enabled,
+  // increment watch progress every 8 seconds by 2%
+  useEffect(() => {
+    if (!activeLecture || !isLiveWatchTracking) return;
+
+    const interval = setInterval(() => {
+      setVideoProgress((prev) => {
+        const currentP = prev[activeLecture.id] || 0;
+        if (currentP >= 100) return prev;
+        const nextP = Math.min(100, currentP + 2);
+        const updated = { ...prev, [activeLecture.id]: nextP };
+
+        // Save to localStorage immediately
+        localStorage.setItem(
+          'hunarsetu_progress_' + (activeUserEmail || 'shg'),
+          JSON.stringify({
+            videoProgress: updated,
+            completedLectures: nextP >= 100 ? [...new Set([...completedLectures, activeLecture.id])] : completedLectures
+          })
+        );
+
+        if (nextP >= 100 && !completedLectures.includes(activeLecture.id)) {
+          const updatedCompleted = [...completedLectures, activeLecture.id];
+          setCompletedLectures(updatedCompleted);
+          setProgressNotification(`🎉 ${activeLecture.title.slice(0, 32)}... 100% पूरा हुआ!`);
+          setTimeout(() => setProgressNotification(null), 4000);
+          if (currentSHG) {
+            onSaveProfile({
+              ...currentSHG,
+              videoProgress: updated,
+              completedLectures: updatedCompleted
+            }).catch(console.error);
+          }
+        } else if (currentSHG && nextP % 10 === 0) {
+          // Sync periodic milestones to Firestore
+          onSaveProfile({
+            ...currentSHG,
+            videoProgress: updated,
+            completedLectures
+          }).catch(console.error);
+        }
+
+        return updated;
+      });
+    }, 8000);
+
+    return () => clearInterval(interval);
+  }, [activeLecture, isLiveWatchTracking, completedLectures, currentSHG, activeUserEmail, onSaveProfile]);
+
+  // Current lecture index for next/prev navigation
+  const currentLectureIndex = activeLecture
+    ? coursesList.findIndex((c) => c.id === activeLecture.id)
+    : -1;
+
+  const handleNextLecture = () => {
+    if (currentLectureIndex >= 0 && currentLectureIndex < coursesList.length - 1) {
+      setActiveLecture(coursesList[currentLectureIndex + 1]);
+    }
+  };
+
+  const handlePrevLecture = () => {
+    if (currentLectureIndex > 0) {
+      setActiveLecture(coursesList[currentLectureIndex - 1]);
+    }
+  };
+
+  // Keyboard shortcut listener for Esc and Fullscreen
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        if (isPlayerFullscreen) {
+          setIsPlayerFullscreen(false);
+        } else if (activeLecture) {
+          setActiveLecture(null);
+        }
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [isPlayerFullscreen, activeLecture]);
 
   // Filter orders assigned specifically to this SHG (supports legacy assignedShgId and multi-SHG allocations)
   const myAssignedOrders = currentSHG
@@ -170,6 +289,25 @@ export const SHGPortal: React.FC<SHGPortalProps> = ({
     setMembers(members.filter((m) => m.id !== id));
   };
 
+  // Cancel registration form without logging out
+  const handleCancelRegistration = () => {
+    if (currentSHG) {
+      // Revert back to current profile and return to dashboard
+      setGroupName(currentSHG.groupName || '');
+      setRegNumber(currentSHG.regNumber || '');
+      setDistrict(currentSHG.district || '');
+      setState(currentSHG.state || '');
+      setContactPhone(currentSHG.contactPhone || '');
+      setOverallSkill(currentSHG.overallSkill || '');
+      setLeaderEmail(currentSHG.leaderEmail || activeUserEmail || '');
+      setMembers(currentSHG.members || []);
+      setIsRegistering(false);
+    } else {
+      // Very first time registration before any profile exists -> back to landing home
+      onBackToHome();
+    }
+  };
+
   // Submit profile registration
   const handleSubmitProfile = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -196,21 +334,45 @@ export const SHGPortal: React.FC<SHGPortalProps> = ({
     setIsRegistering(false);
   };
 
-  // Video progress updater
+  // Video progress updater with instant persistence
   const handleUpdateProgress = async (lectureId: string, percent: number) => {
-    const updatedProg = { ...videoProgress, [lectureId]: percent };
+    const clamped = Math.max(0, Math.min(100, Math.round(percent)));
+    const updatedProg = { ...videoProgress, [lectureId]: clamped };
     setVideoProgress(updatedProg);
+
     let updatedCompleted = [...completedLectures];
-    if (percent >= 100 && !updatedCompleted.includes(lectureId)) {
-      updatedCompleted.push(lectureId);
+    if (clamped >= 100) {
+      if (!updatedCompleted.includes(lectureId)) {
+        updatedCompleted.push(lectureId);
+        setCompletedLectures(updatedCompleted);
+      }
+      setProgressNotification('🎉 पाठ्यक्रम प्रगति सहेज ली गई! (Curriculum Progress Saved)');
+      setTimeout(() => setProgressNotification(null), 3500);
+    } else {
+      updatedCompleted = updatedCompleted.filter((id) => id !== lectureId);
       setCompletedLectures(updatedCompleted);
     }
-    if (currentSHG) {
-      await onSaveProfile({
-        ...currentSHG,
+
+    // Save in localStorage immediately
+    localStorage.setItem(
+      'hunarsetu_progress_' + (activeUserEmail || 'shg'),
+      JSON.stringify({
         videoProgress: updatedProg,
         completedLectures: updatedCompleted
-      });
+      })
+    );
+
+    // Save to Firestore for current SHG
+    if (currentSHG) {
+      try {
+        await onSaveProfile({
+          ...currentSHG,
+          videoProgress: updatedProg,
+          completedLectures: updatedCompleted
+        });
+      } catch (err) {
+        console.error('Failed to sync progress to cloud:', err);
+      }
     }
   };
 
@@ -226,10 +388,10 @@ export const SHGPortal: React.FC<SHGPortalProps> = ({
               </span>
               <button
                 type="button"
-                onClick={onBackToHome}
+                onClick={handleCancelRegistration}
                 className="text-xs bg-emerald-700/80 hover:bg-emerald-700 px-3 py-1 rounded-lg text-emerald-100 transition-colors"
               >
-                Back to Home
+                {currentSHG ? '← Back to Dashboard' : 'Back to Home'}
               </button>
             </div>
             <h1 className="text-2xl sm:text-3xl font-bold tracking-tight">
@@ -448,10 +610,10 @@ export const SHGPortal: React.FC<SHGPortalProps> = ({
             <div className="flex items-center justify-end gap-3 pt-2">
               <button
                 type="button"
-                onClick={onBackToHome}
-                className="px-4 py-2 border border-slate-300 text-slate-700 text-xs font-semibold rounded-xl hover:bg-slate-100"
+                onClick={handleCancelRegistration}
+                className="px-4 py-2 border border-slate-300 text-slate-700 text-xs font-semibold rounded-xl hover:bg-slate-100 transition-colors"
               >
-                Cancel
+                {currentSHG ? 'Cancel & Return to Dashboard' : 'Cancel'}
               </button>
               <button
                 id="submit-shg-registration-btn"
@@ -573,26 +735,26 @@ export const SHGPortal: React.FC<SHGPortalProps> = ({
                     <Award className="w-4 h-4 text-amber-500" /> Overall Progress
                   </span>
                   <span className="text-emerald-700">
-                    {completedLectures.length} of {SHG_COURSES.length} Completed
+                    {completedLectures.length} of {coursesList.length} Completed
                   </span>
                 </div>
                 <div className="w-full h-2 bg-slate-200 rounded-full overflow-hidden">
                   <div
                     className="h-full bg-emerald-600 transition-all duration-500"
                     style={{
-                      width: `${Math.round((completedLectures.length / SHG_COURSES.length) * 100)}%`
+                      width: `${coursesList.length > 0 ? Math.round((completedLectures.length / coursesList.length) * 100) : 0}%`
                     }}
                   />
                 </div>
                 <span className="text-[10px] text-slate-400 mt-1.5 block text-right">
-                  {Math.round((completedLectures.length / SHG_COURSES.length) * 100)}% certified curriculum completed
+                  {coursesList.length > 0 ? Math.round((completedLectures.length / coursesList.length) * 100) : 0}% certified curriculum completed
                 </span>
               </div>
             </div>
 
             {/* Lecture Cards Grid with embedded or popup video and progress tracker */}
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-              {SHG_COURSES.map((course) => {
+              {coursesList.map((course) => {
                 const prog = videoProgress[course.id] || 0;
                 const isCompleted = completedLectures.includes(course.id) || prog >= 100;
 
@@ -849,57 +1011,341 @@ export const SHGPortal: React.FC<SHGPortalProps> = ({
         )}
       </main>
 
-      {/* VIDEO PLAYER MODAL */}
+      {/* PROGRESS TOAST NOTIFICATION */}
+      {progressNotification && (
+        <div className="fixed bottom-6 right-6 z-50 bg-emerald-900 text-emerald-100 px-4 py-3 rounded-xl shadow-2xl border border-emerald-600 flex items-center gap-2.5 text-xs font-semibold animate-bounce">
+          <CheckCircle2 className="w-4 h-4 text-emerald-300 shrink-0" />
+          <span>{progressNotification}</span>
+        </div>
+      )}
+
+      {/* VIDEO PLAYER: FULLSCREEN OR MODAL */}
       {activeLecture && (
-        <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-xs flex items-center justify-center p-4">
-          <div className="bg-white rounded-2xl max-w-3xl w-full overflow-hidden shadow-2xl flex flex-col">
-            <div className="px-5 py-3 border-b border-slate-200 flex items-center justify-between bg-slate-50">
-              <span className="text-xs font-bold text-slate-700 truncate pr-4">
-                {activeLecture.title}
-              </span>
-              <button
-                id="close-video-modal-btn"
-                onClick={() => setActiveLecture(null)}
-                className="text-slate-400 hover:text-slate-700 text-sm font-bold"
-              >
-                ✕ Close
-              </button>
+        isPlayerFullscreen ? (
+          /* IN-WEBSITE FULLSCREEN VIEW (takes entire viewport inside our website) */
+          <div
+            id="fullscreen-video-overlay"
+            className="fixed inset-0 z-50 bg-black text-white flex flex-col w-screen h-screen overflow-hidden"
+          >
+            {/* Fullscreen Header */}
+            <div className="bg-slate-900/95 backdrop-blur-md px-4 sm:px-6 py-3 border-b border-slate-800 flex items-center justify-between gap-4 shrink-0">
+              <div className="flex items-center gap-3 min-w-0">
+                <span className="px-2.5 py-1 rounded-md bg-emerald-500/20 text-emerald-300 font-bold text-xs uppercase tracking-wider shrink-0 border border-emerald-500/30 flex items-center gap-1.5">
+                  <Sparkles className="w-3.5 h-3.5 text-emerald-400" />
+                  <span className="hidden sm:inline">{activeLecture.category}</span>
+                  <span className="sm:hidden">Hindi Tutorial</span>
+                </span>
+                <div className="min-w-0">
+                  <h3 className="text-xs sm:text-sm md:text-base font-bold text-white truncate">
+                    {activeLecture.title}
+                  </h3>
+                  <p className="text-[11px] text-slate-400 truncate">
+                    {activeLecture.instructor} • {activeLecture.duration} • {activeLecture.level}
+                  </p>
+                </div>
+              </div>
+
+              <div className="flex items-center gap-2 shrink-0">
+                {/* Live Watch Tracker Badge */}
+                <button
+                  type="button"
+                  onClick={() => setIsLiveWatchTracking(!isLiveWatchTracking)}
+                  className={`px-2.5 sm:px-3 py-1.5 rounded-lg text-xs font-semibold flex items-center gap-1.5 transition-all ${
+                    isLiveWatchTracking
+                      ? 'bg-emerald-950 text-emerald-300 border border-emerald-700/60'
+                      : 'bg-slate-800 text-slate-400 border border-slate-700'
+                  }`}
+                  title={isLiveWatchTracking ? 'Watch time tracker is auto-advancing' : 'Watch tracker paused'}
+                >
+                  <span className={`w-2 h-2 rounded-full ${isLiveWatchTracking ? 'bg-emerald-400 animate-pulse' : 'bg-slate-500'}`} />
+                  <span className="hidden md:inline">Auto Tracker:</span> {isLiveWatchTracking ? 'Active' : 'Paused'}
+                </button>
+
+                {/* Exit Fullscreen to standard modal */}
+                <button
+                  id="exit-fullscreen-btn"
+                  type="button"
+                  onClick={() => setIsPlayerFullscreen(false)}
+                  className="px-3 py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-200 hover:text-white rounded-lg text-xs font-semibold flex items-center gap-1.5 transition-colors border border-slate-700"
+                  title="Exit Fullscreen Player (Esc)"
+                >
+                  <Minimize2 className="w-4 h-4 text-emerald-400" />
+                  <span className="hidden sm:inline">Normal View</span>
+                </button>
+
+                {/* Close Player */}
+                <button
+                  id="close-fullscreen-player-btn"
+                  type="button"
+                  onClick={() => {
+                    setActiveLecture(null);
+                    setIsPlayerFullscreen(false);
+                  }}
+                  className="p-1.5 text-slate-400 hover:text-white hover:bg-slate-800 rounded-lg transition-colors"
+                  title="Close Video"
+                >
+                  <X className="w-5 h-5" />
+                </button>
+              </div>
             </div>
 
-            {/* Embedded Responsive YouTube Player */}
-            <div className="aspect-video w-full bg-black">
+            {/* Video Canvas */}
+            <div className="flex-1 w-full bg-black flex items-center justify-center relative min-h-0">
               <iframe
-                className="w-full h-full"
-                src={`https://www.youtube.com/embed/${activeLecture.youtubeId}?autoplay=1`}
+                key={activeLecture.id}
+                className="w-full h-full max-w-6xl max-h-[82vh]"
+                src={`https://www.youtube.com/embed/${activeLecture.youtubeId}?autoplay=1&enablejsapi=1&rel=0`}
                 title={activeLecture.title}
-                allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
+                allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share"
                 allowFullScreen
               />
             </div>
 
-            <div className="p-5 space-y-3">
-              <div className="flex items-center justify-between">
-                <div>
-                  <h4 className="text-sm font-bold text-slate-900">{activeLecture.instructor}</h4>
-                  <p className="text-xs text-slate-500">{activeLecture.duration} • {activeLecture.level}</p>
+            {/* Fullscreen Bottom Bar & Progress Controls */}
+            <div className="bg-slate-900/95 backdrop-blur-md px-4 sm:px-6 py-3 sm:py-4 border-t border-slate-800 shrink-0 space-y-2.5">
+              {/* Progress info and slider */}
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+                <div className="flex items-center gap-2 text-xs font-semibold">
+                  <Award className="w-4 h-4 text-amber-400" />
+                  <span className="text-slate-300">Course Progress:</span>
+                  <span className="text-emerald-400 font-bold text-sm">
+                    {videoProgress[activeLecture.id] || 0}%
+                  </span>
+                  {(videoProgress[activeLecture.id] || 0) >= 100 && (
+                    <span className="text-[10px] bg-emerald-500/20 text-emerald-300 px-2 py-0.5 rounded border border-emerald-500/30 font-bold flex items-center gap-1">
+                      <Check className="w-3 h-3" /> Completed & Certified
+                    </span>
+                  )}
                 </div>
-                <button
-                  id="mark-lecture-finished-btn"
-                  onClick={() => {
-                    handleUpdateProgress(activeLecture.id, 100);
-                    setActiveLecture(null);
-                  }}
-                  className="px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold rounded-lg flex items-center gap-1 shadow-sm"
-                >
-                  <Check className="w-4 h-4" /> Mark 100% Completed
-                </button>
+
+                {/* Quick set percentage pills */}
+                <div className="flex items-center gap-1.5 overflow-x-auto pb-1 sm:pb-0">
+                  <span className="text-[11px] text-slate-400 mr-1 hidden md:inline">Quick Jump:</span>
+                  {[25, 50, 75].map((pct) => (
+                    <button
+                      key={pct}
+                      type="button"
+                      onClick={() => handleUpdateProgress(activeLecture.id, pct)}
+                      className="px-2 py-0.5 bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white rounded text-[11px] font-mono border border-slate-700 transition-colors"
+                    >
+                      {pct}%
+                    </button>
+                  ))}
+                  <button
+                    type="button"
+                    onClick={() => handleUpdateProgress(activeLecture.id, 100)}
+                    className="px-2.5 py-0.5 bg-emerald-600 hover:bg-emerald-500 text-white rounded text-[11px] font-bold shadow-xs transition-colors flex items-center gap-1"
+                  >
+                    <Check className="w-3 h-3" /> Mark 100% Completed
+                  </button>
+                </div>
               </div>
-              <p className="text-xs text-slate-600 leading-relaxed">
-                {activeLecture.description}
-              </p>
+
+              {/* Range scrubber */}
+              <input
+                id="fullscreen-progress-slider"
+                type="range"
+                min="0"
+                max="100"
+                value={videoProgress[activeLecture.id] || 0}
+                onChange={(e) => handleUpdateProgress(activeLecture.id, Number(e.target.value))}
+                className="w-full accent-emerald-500 cursor-pointer h-2 bg-slate-800 rounded-lg"
+              />
+
+              {/* Navigation controls */}
+              <div className="flex items-center justify-between text-xs pt-1">
+                <div className="flex items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={handlePrevLecture}
+                    disabled={currentLectureIndex <= 0}
+                    className="px-3 py-1 bg-slate-800 hover:bg-slate-700 disabled:opacity-40 disabled:hover:bg-slate-800 text-slate-200 rounded-lg font-semibold flex items-center gap-1 transition-colors border border-slate-700"
+                  >
+                    <ChevronLeft className="w-3.5 h-3.5" /> Previous Lesson
+                  </button>
+                  <button
+                    type="button"
+                    onClick={handleNextLecture}
+                    disabled={currentLectureIndex >= coursesList.length - 1}
+                    className="px-3 py-1 bg-slate-800 hover:bg-slate-700 disabled:opacity-40 disabled:hover:bg-slate-800 text-slate-200 rounded-lg font-semibold flex items-center gap-1 transition-colors border border-slate-700"
+                  >
+                    Next Lesson <ChevronRight className="w-3.5 h-3.5" />
+                  </button>
+                  <span className="text-slate-400 text-[11px] hidden sm:inline ml-2">
+                    Lesson {currentLectureIndex + 1} of {coursesList.length}
+                  </span>
+                </div>
+
+                <div className="flex items-center gap-3">
+                  <a
+                    href={activeLecture.youtubeUrl}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="text-slate-400 hover:text-slate-200 text-xs flex items-center gap-1"
+                  >
+                    YouTube Link <ExternalLink className="w-3 h-3" />
+                  </a>
+                </div>
+              </div>
             </div>
           </div>
-        </div>
+        ) : (
+          /* STANDARD MODAL VIEW (with Full Screen option) */
+          <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-xs flex items-center justify-center p-3 sm:p-4">
+            <div className="bg-white rounded-2xl max-w-3xl w-full overflow-hidden shadow-2xl flex flex-col max-h-[95vh]">
+              {/* Header */}
+              <div className="px-5 py-3 border-b border-slate-200 flex items-center justify-between bg-slate-50 gap-2">
+                <div className="flex items-center gap-2 min-w-0">
+                  <span className="px-2 py-0.5 rounded text-[10px] font-bold uppercase bg-emerald-100 text-emerald-800 shrink-0">
+                    Hindi Masterclass
+                  </span>
+                  <span className="text-xs font-bold text-slate-800 truncate">
+                    {activeLecture.title}
+                  </span>
+                </div>
+
+                <div className="flex items-center gap-2 shrink-0">
+                  {/* Full Screen Button inside our website */}
+                  <button
+                    id="fullscreen-toggle-btn"
+                    type="button"
+                    onClick={() => setIsPlayerFullscreen(true)}
+                    className="text-xs bg-emerald-50 hover:bg-emerald-100 text-emerald-800 px-2.5 py-1.5 rounded-lg font-bold flex items-center gap-1.5 transition-colors border border-emerald-200"
+                    title="Play in Fullscreen Inside Website"
+                  >
+                    <Maximize2 className="w-3.5 h-3.5 text-emerald-700" />
+                    <span className="hidden sm:inline">Full Screen</span>
+                  </button>
+
+                  <button
+                    id="close-video-modal-btn"
+                    type="button"
+                    onClick={() => setActiveLecture(null)}
+                    className="text-slate-400 hover:text-slate-700 text-sm font-bold p-1 rounded-lg hover:bg-slate-200 transition-colors"
+                  >
+                    <X className="w-4 h-4" />
+                  </button>
+                </div>
+              </div>
+
+              {/* Embedded Responsive YouTube Player */}
+              <div className="aspect-video w-full bg-black relative">
+                <iframe
+                  key={activeLecture.id}
+                  className="w-full h-full"
+                  src={`https://www.youtube.com/embed/${activeLecture.youtubeId}?autoplay=1&enablejsapi=1&rel=0`}
+                  title={activeLecture.title}
+                  allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share"
+                  allowFullScreen
+                />
+              </div>
+
+              {/* Modal Body & Progress Tracking */}
+              <div className="p-4 sm:p-5 space-y-3 overflow-y-auto">
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-2 border-b border-slate-100">
+                  <div>
+                    <h4 className="text-sm font-bold text-slate-900">{activeLecture.instructor}</h4>
+                    <p className="text-xs text-slate-500">{activeLecture.duration} • {activeLecture.level} • {activeLecture.category}</p>
+                  </div>
+
+                  <div className="flex items-center gap-2">
+                    <button
+                      type="button"
+                      onClick={() => setIsLiveWatchTracking(!isLiveWatchTracking)}
+                      className={`text-[11px] font-semibold px-2 py-1 rounded-md border flex items-center gap-1 ${
+                        isLiveWatchTracking
+                          ? 'bg-emerald-50 text-emerald-700 border-emerald-200'
+                          : 'bg-slate-100 text-slate-500 border-slate-200'
+                      }`}
+                    >
+                      <span className={`w-1.5 h-1.5 rounded-full ${isLiveWatchTracking ? 'bg-emerald-500 animate-pulse' : 'bg-slate-400'}`} />
+                      {isLiveWatchTracking ? 'Auto Progress: ON' : 'Auto Progress: OFF'}
+                    </button>
+                    <button
+                      id="mark-lecture-finished-btn"
+                      type="button"
+                      onClick={() => handleUpdateProgress(activeLecture.id, 100)}
+                      className="px-3.5 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold rounded-lg flex items-center gap-1 shadow-sm transition-all"
+                    >
+                      <Check className="w-3.5 h-3.5" /> Mark 100% Completed
+                    </button>
+                  </div>
+                </div>
+
+                {/* Interactive Progress Slider */}
+                <div className="space-y-1.5 bg-slate-50 p-3 rounded-xl border border-slate-200">
+                  <div className="flex items-center justify-between text-xs font-semibold">
+                    <span className="text-slate-700 flex items-center gap-1.5">
+                      <Award className="w-3.5 h-3.5 text-amber-500" /> Current Lesson Progress:
+                    </span>
+                    <span className="text-emerald-700 font-bold">
+                      {videoProgress[activeLecture.id] || 0}%
+                    </span>
+                  </div>
+                  <input
+                    id="modal-progress-slider"
+                    type="range"
+                    min="0"
+                    max="100"
+                    value={videoProgress[activeLecture.id] || 0}
+                    onChange={(e) => handleUpdateProgress(activeLecture.id, Number(e.target.value))}
+                    className="w-full accent-emerald-600 cursor-pointer"
+                  />
+                  <div className="flex items-center justify-between text-[11px] text-slate-500 pt-1">
+                    <span>Scrub to update or watch to advance</span>
+                    <div className="flex items-center gap-1">
+                      {[25, 50, 75].map((p) => (
+                        <button
+                          key={p}
+                          type="button"
+                          onClick={() => handleUpdateProgress(activeLecture.id, p)}
+                          className="px-1.5 py-0.5 bg-white hover:bg-slate-100 border border-slate-200 rounded text-[10px] font-mono text-slate-700"
+                        >
+                          {p}%
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                </div>
+
+                <p className="text-xs text-slate-600 leading-relaxed">
+                  {activeLecture.description}
+                </p>
+
+                {/* Lesson Navigation Footer */}
+                <div className="flex items-center justify-between pt-2 border-t border-slate-100">
+                  <div className="flex items-center gap-2">
+                    <button
+                      type="button"
+                      onClick={handlePrevLecture}
+                      disabled={currentLectureIndex <= 0}
+                      className="px-3 py-1 bg-slate-100 hover:bg-slate-200 disabled:opacity-40 text-slate-700 rounded-lg text-xs font-semibold flex items-center gap-1"
+                    >
+                      <ChevronLeft className="w-3.5 h-3.5" /> Previous
+                    </button>
+                    <button
+                      type="button"
+                      onClick={handleNextLecture}
+                      disabled={currentLectureIndex >= coursesList.length - 1}
+                      className="px-3 py-1 bg-slate-100 hover:bg-slate-200 disabled:opacity-40 text-slate-700 rounded-lg text-xs font-semibold flex items-center gap-1"
+                    >
+                      Next <ChevronRight className="w-3.5 h-3.5" />
+                    </button>
+                  </div>
+
+                  <a
+                    href={activeLecture.youtubeUrl}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="text-xs text-slate-500 hover:text-slate-800 flex items-center gap-1"
+                  >
+                    Open YouTube <ExternalLink className="w-3 h-3" />
+                  </a>
+                </div>
+              </div>
+            </div>
+          </div>
+        )
       )}
     </div>
   );

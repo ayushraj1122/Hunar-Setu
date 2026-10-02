@@ -82,6 +82,26 @@
         "createdAt": { "type": "string" }
       },
       "required": ["email", "password", "role"]
+    },
+    "training_videos": {
+      "title": "Training Videos",
+      "description": "Curriculum craft masterclass and skill development videos for SHGs managed by Admin",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "title": { "type": "string" },
+        "category": { "type": "string" },
+        "instructor": { "type": "string" },
+        "duration": { "type": "string" },
+        "level": { "type": "string" },
+        "youtubeId": { "type": "string" },
+        "youtubeUrl": { "type": "string" },
+        "thumbnail": { "type": "string" },
+        "description": { "type": "string" },
+        "keySkillsTaught": { "type": "array" },
+        "createdAt": { "type": "string" }
+      },
+      "required": ["title", "youtubeId", "youtubeUrl", "category"]
     }
   }
 }

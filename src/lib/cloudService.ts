@@ -5,18 +5,20 @@ import {
   getDoc,
   setDoc,
   updateDoc,
+  deleteDoc,
   query,
   where,
   onSnapshot
 } from 'firebase/firestore';
 import { db } from './firebase';
-import { Product, SHGProfile, OrderItem, SHGAllocation, UserAccount } from '../types';
-import { INITIAL_PRODUCTS } from '../data/seedData';
+import { Product, SHGProfile, OrderItem, SHGAllocation, UserAccount, LectureCourse } from '../types';
+import { INITIAL_PRODUCTS, SHG_COURSES } from '../data/seedData';
 
 const PRODUCTS_COLLECTION = 'products';
 const SHG_COLLECTION = 'shg_profiles';
 const ORDERS_COLLECTION = 'orders';
 const USER_ACCOUNTS_COLLECTION = 'user_accounts';
+const TRAINING_VIDEOS_COLLECTION = 'training_videos';
 
 // Order deduplication helper to ensure no duplicate rows appear across screens
 export function deduplicateOrders(orderList: OrderItem[]): OrderItem[] {
@@ -272,6 +274,80 @@ export async function updateOrderProductionStatus(
   // General update if not multi-SHG specific
   await updateDoc(docRef, {
     productionStatus: status
+  });
+}
+
+// ==================== SHG TRAINING VIDEOS / CURRICULUM ====================
+
+// Initialize training videos in Firestore if not already present
+export async function initializeCloudTrainingVideos(): Promise<LectureCourse[]> {
+  try {
+    const querySnapshot = await getDocs(collection(db, TRAINING_VIDEOS_COLLECTION));
+    if (querySnapshot.empty) {
+      console.log('Seeding initial SHG training videos into Firestore...');
+      for (const course of SHG_COURSES) {
+        await setDoc(doc(db, TRAINING_VIDEOS_COLLECTION, course.id), course);
+      }
+      return SHG_COURSES;
+    } else {
+      const courses: LectureCourse[] = [];
+      querySnapshot.forEach((snap) => {
+        courses.push({ id: snap.id, ...snap.data() } as LectureCourse);
+      });
+      return courses;
+    }
+  } catch (err) {
+    console.error('Error in initializeCloudTrainingVideos:', err);
+    return SHG_COURSES;
+  }
+}
+
+// Fetch all training videos from Firestore
+export async function getCloudTrainingVideos(): Promise<LectureCourse[]> {
+  try {
+    const querySnapshot = await getDocs(collection(db, TRAINING_VIDEOS_COLLECTION));
+    if (querySnapshot.empty) {
+      return await initializeCloudTrainingVideos();
+    }
+    const list: LectureCourse[] = [];
+    querySnapshot.forEach((d) => {
+      list.push({ id: d.id, ...d.data() } as LectureCourse);
+    });
+    return list;
+  } catch (err) {
+    console.error('Error fetching training videos:', err);
+    return SHG_COURSES;
+  }
+}
+
+// Save or update a training video in Firestore
+export async function saveTrainingVideoToCloud(video: LectureCourse): Promise<void> {
+  const docRef = doc(db, TRAINING_VIDEOS_COLLECTION, video.id);
+  await setDoc(docRef, video, { merge: true });
+}
+
+// Delete a training video from Firestore
+export async function deleteTrainingVideoFromCloud(videoId: string): Promise<void> {
+  const docRef = doc(db, TRAINING_VIDEOS_COLLECTION, videoId);
+  await deleteDoc(docRef);
+}
+
+// Subscribe to real-time updates for training videos
+export function subscribeToTrainingVideos(callback: (courses: LectureCourse[]) => void): () => void {
+  return onSnapshot(collection(db, TRAINING_VIDEOS_COLLECTION), (snapshot) => {
+    if (snapshot.empty) {
+      // If collection was cleared or not yet seeded
+      callback(SHG_COURSES);
+      return;
+    }
+    const list: LectureCourse[] = [];
+    snapshot.forEach((docSnap) => {
+      list.push({ id: docSnap.id, ...docSnap.data() } as LectureCourse);
+    });
+    callback(list);
+  }, (err) => {
+    console.warn('Training videos subscription error, using local fallback:', err);
+    callback(SHG_COURSES);
   });
 }
 

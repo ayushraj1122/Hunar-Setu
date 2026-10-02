@@ -3,7 +3,7 @@ import { LandingHero } from './components/LandingHero';
 import { SHGPortal } from './components/SHGPortal';
 import { BuyerPortal } from './components/BuyerPortal';
 import { AdminPortal } from './components/AdminPortal';
-import { Product, SHGProfile, OrderItem, SHGAllocation } from './types';
+import { Product, SHGProfile, OrderItem, SHGAllocation, LectureCourse } from './types';
 import {
   initializeCloudProducts,
   getCloudProducts,
@@ -18,9 +18,14 @@ import {
   updateOrderAssignment,
   updateOrderAllocations,
   updateOrderProductionStatus,
-  deduplicateOrders
+  deduplicateOrders,
+  initializeCloudTrainingVideos,
+  getCloudTrainingVideos,
+  saveTrainingVideoToCloud,
+  deleteTrainingVideoFromCloud,
+  subscribeToTrainingVideos
 } from './lib/cloudService';
-import { INITIAL_PRODUCTS } from './data/seedData';
+import { INITIAL_PRODUCTS, SHG_COURSES } from './data/seedData';
 
 export default function App() {
   // Navigation Role state: null (Landing page) | 'shg' | 'buyer' | 'admin'
@@ -32,6 +37,7 @@ export default function App() {
   const [products, setProducts] = useState<Product[]>(INITIAL_PRODUCTS);
   const [orders, setOrders] = useState<OrderItem[]>([]);
   const [shgList, setShgList] = useState<SHGProfile[]>([]);
+  const [courses, setCourses] = useState<LectureCourse[]>(SHG_COURSES);
   const [currentSHG, setCurrentSHG] = useState<SHGProfile | null>(null);
   const [loading, setLoading] = useState<boolean>(true);
 
@@ -40,6 +46,7 @@ export default function App() {
     let unsubscribeProducts: (() => void) | undefined;
     let unsubscribeOrders: (() => void) | undefined;
     let unsubscribeSHGs: (() => void) | undefined;
+    let unsubscribeCourses: (() => void) | undefined;
 
     async function initDatabase() {
       try {
@@ -55,6 +62,10 @@ export default function App() {
         const initialSHGs = await getAllSHGs();
         setShgList(initialSHGs);
 
+        // Initialize and fetch training videos
+        const initialCourses = await initializeCloudTrainingVideos();
+        setCourses(initialCourses);
+
         // Realtime Firestore listeners
         unsubscribeProducts = subscribeToProducts((cloudProds) => {
           setProducts(cloudProds);
@@ -66,6 +77,10 @@ export default function App() {
 
         unsubscribeSHGs = subscribeToSHGs((cloudSHGs) => {
           setShgList(cloudSHGs);
+        });
+
+        unsubscribeCourses = subscribeToTrainingVideos((cloudCourses) => {
+          setCourses(cloudCourses);
         });
       } catch (err) {
         console.warn('Database initialization caught error, using local fallback:', err);
@@ -80,6 +95,7 @@ export default function App() {
       if (unsubscribeProducts) unsubscribeProducts();
       if (unsubscribeOrders) unsubscribeOrders();
       if (unsubscribeSHGs) unsubscribeSHGs();
+      if (unsubscribeCourses) unsubscribeCourses();
     };
   }, []);
 
@@ -250,6 +266,26 @@ export default function App() {
     );
   };
 
+  // Admin save training course video
+  const handleAdminSaveCourse = async (course: LectureCourse) => {
+    await saveTrainingVideoToCloud(course);
+    setCourses((prev) => {
+      const idx = prev.findIndex((c) => c.id === course.id);
+      if (idx >= 0) {
+        const updated = [...prev];
+        updated[idx] = course;
+        return updated;
+      }
+      return [course, ...prev];
+    });
+  };
+
+  // Admin delete training course video
+  const handleAdminDeleteCourse = async (courseId: string) => {
+    await deleteTrainingVideoFromCloud(courseId);
+    setCourses((prev) => prev.filter((c) => c.id !== courseId));
+  };
+
   // Completely separate page view routing per requirement
   if (currentRole === 'shg') {
     return (
@@ -257,6 +293,7 @@ export default function App() {
         currentSHG={currentSHG}
         activeUserEmail={activeUserEmail}
         orders={orders}
+        courses={courses}
         onSaveProfile={handleSaveSHGProfile}
         onUpdateOrderStatus={handleUpdateOrderStatus}
         onBackToHome={handleBackToHome}
@@ -282,8 +319,11 @@ export default function App() {
         products={products}
         orders={orders}
         shgList={shgList}
+        courses={courses}
         onSaveProduct={handleAdminSaveProduct}
         onDistributeOrder={handleDistributeOrder}
+        onSaveCourse={handleAdminSaveCourse}
+        onDeleteCourse={handleAdminDeleteCourse}
         onBackToHome={handleBackToHome}
       />
     );
